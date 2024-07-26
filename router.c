@@ -5,6 +5,7 @@
 #include <linux/if_vlan.h>
 #include <linux/ip.h>
 #include <linux/ipv6.h>
+#include <linux/udp.h>
 
 #include <sys/socket.h>
 
@@ -52,7 +53,7 @@ SEC("prog") int xdp_router(struct xdp_md *ctx) {
         // tagged pkt on non-trunked port, drop
         struct vlan_hdr *vhdr = l3hdr;
         if (l3hdr + sizeof(struct vlan_hdr) > data_end) return XDP_DROP;
-        
+
         l3hdr += sizeof(struct vlan_hdr);
         ether_proto = vhdr->inner_ether_proto;
     }
@@ -60,6 +61,18 @@ SEC("prog") int xdp_router(struct xdp_md *ctx) {
     if (ether_proto == ETH_P_IP) {
         if (l3hdr + sizeof(struct iphdr) > data_end) return XDP_DROP;
         struct iphdr *ip = l3hdr;
+
+        // Check if the packet is a UDP packet
+        if (ip->protocol == IPPROTO_UDP) {
+            struct udphdr *udp = l3hdr + sizeof(struct iphdr);
+            if ((void *)(udp + 1) > data_end) return XDP_DROP;
+
+            // Check if the UDP packet is a DHCP packet
+            if ((udp->source == bpf_htons(67) && udp->dest == bpf_htons(68)) ||
+                (udp->source == bpf_htons(68) && udp->dest == bpf_htons(67))) {
+                return XDP_PASS;
+            }
+        }
 
         if (ip->ttl <= 1) return XDP_PASS;
 
